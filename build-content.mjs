@@ -26,8 +26,11 @@ function readP5Source() {
   const src = fs.readFileSync(srcPath, "utf8");
   const arrayMatch = src.match(/const _p = \[([\s\S]*?)\];/);
   if (!arrayMatch) throw new Error("Could not parse p5Source.ts");
-  const script = `const _p=[${arrayMatch[1]}];process.stdout.write(_p.join(""));`;
-  const joined = execSync("node -e " + JSON.stringify(script), { encoding: "utf8" });
+  const parts = arrayMatch[1];
+  const tmp = path.resolve("./p5-join.js");
+  fs.writeFileSync(tmp, `const _p=[${parts}];process.stdout.write(_p.join(""));`);
+  const joined = execSync("node p5-join.js", { encoding: "utf8" });
+  fs.unlinkSync(tmp);
   return joined;
 }
 
