@@ -18,7 +18,7 @@ function ensureDir(dir) {
 }
 
 function readP5Source() {
-  const src = fs.readFileSync(path.resolve("src/utils/p5Source.ts"), "utf8");
+  const src = fs.readFileSync(path.resolve("./p5Source.ts"), "utf8");
   const match = src.match(/export const p5Source: string = (_p\.join\(["'][^"']*["']\)|(?:.|\n)*?)\n/s);
   // The generated file uses _p array joined; reconstruct by evaluating.
   // Simpler: extract array content and join.
@@ -34,22 +34,22 @@ function main() {
 
   // Ensure artifacts exist.
   try {
-    require.resolve("../src/utils/p5Source.ts");
+    require.resolve(".././p5Source.ts");
   } catch {
     run("node scripts/bundle-p5.mjs");
   }
 
   try {
-    require.resolve("../src/data/reference.generated.json");
+    require.resolve(".././reference.generated.json");
   } catch {
     run("node scripts/generate-reference.mjs");
   }
 
   const { loadAllCoursesFromFiles } = awaitImport("./build-content-courses.mjs");
   const courses = loadAllCoursesFromFiles();
-  const reference = JSON.parse(fs.readFileSync(path.resolve("src/data/reference.generated.json"), "utf8"));
-  const p5Assets = fs.existsSync(path.resolve("src/data/p5Assets.generated.json"))
-    ? JSON.parse(fs.readFileSync(path.resolve("src/data/p5Assets.generated.json"), "utf8"))
+  const reference = JSON.parse(fs.readFileSync(path.resolve("./reference.generated.json"), "utf8"));
+  const p5Assets = fs.existsSync(path.resolve("./p5Assets.generated.json"))
+    ? JSON.parse(fs.readFileSync(path.resolve("./p5Assets.generated.json"), "utf8"))
     : {};
   const p5Source = readP5Source();
 

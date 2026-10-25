@@ -8,8 +8,8 @@ import { PINNED_P5_VERSION } from "./p5-version.mjs";
 const WEBSITE_REPO = "https://github.com/processing/p5.js-website.git";
 const REF_DIR = "src/content/reference/en";
 const ASSETS_DIR = "public/assets";
-const OUT_FILE = path.resolve("src/data/reference.generated.json");
-const ASSETS_OUT_FILE = path.resolve("src/data/p5Assets.generated.json");
+const OUT_FILE = path.resolve("./reference.generated.json");
+const ASSETS_OUT_FILE = path.resolve("./p5Assets.generated.json");
 
 // Match p5.js load* calls that reference /assets/<name> or "./<name>" files.
 // Captures the quote char and the path so we can rewrite to a placeholder
