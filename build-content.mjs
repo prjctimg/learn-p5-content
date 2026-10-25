@@ -36,13 +36,13 @@ function main() {
   try {
     require.resolve(".././p5Source.ts");
   } catch {
-    run("node scripts/bundle-p5.mjs");
+    run("node bundle-p5.mjs");
   }
 
   try {
     require.resolve(".././reference.generated.json");
   } catch {
-    run("node scripts/generate-reference.mjs");
+    run("node generate-reference.mjs");
   }
 
   const { loadAllCoursesFromFiles } = awaitImport("./build-content-courses.mjs");
