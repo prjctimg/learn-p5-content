@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import jsyaml from "js-yaml";
 
-const COURSES_DIR = path.resolve("src/data/courses");
+const COURSES_DIR = path.resolve("./courses");
 
 function slugToVarName(slug) {
   return slug.replace(/-([a-z])/g, (_, c) => c.toUpperCase()) + "Course";
