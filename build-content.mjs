@@ -24,7 +24,7 @@ function ensureDir(dir) {
 }
 
 function readP5Source() {
-  const srcPath = path.resolve("./p5Source.ts");
+  const srcPath = fs.existsSync(path.resolve("./p5Source.ts")) ? path.resolve("./p5Source.ts") : path.resolve("../p5Source.ts");
   const src = fs.readFileSync(srcPath, "utf8");
   const arrayMatch = src.match(/const _p = \[([\s\S]*?)\];/);
   if (!arrayMatch) throw new Error("Could not parse p5Source.ts");
