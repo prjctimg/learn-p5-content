@@ -3,11 +3,9 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execSync } from "child_process";
-import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { PINNED_P5_VERSION } from "./p5-version.mjs";
 
-const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -28,20 +26,16 @@ function readP5Source() {
   const src = fs.readFileSync(srcPath, "utf8");
   const arrayMatch = src.match(/const _p = \[([\s\S]*?)\];/);
   if (!arrayMatch) throw new Error("Could not parse p5Source.ts");
-  const joined = execSync(
-    `node -e ${JSON.stringify(
-      `const _p=[${arrayMatch[1]}];console.log(_p.join(""));`
-    )}`,
-    { encoding: "utf8" }
-  );
+  const script = `const _p=[${arrayMatch[1]}];process.stdout.write(_p.join(""));`;
+  const joined = execSync("node -e " + JSON.stringify(script), { encoding: "utf8" });
   return joined;
 }
 
 async function main() {
   ensureDir(OUT_DIR);
 
-  const p5SourcePath = path.resolve("./p5Source.ts");
-  const refPath = path.resolve("./reference.generated.json");
+  const p5SourcePath = fs.existsSync(path.resolve("./p5Source.ts")) ? path.resolve("./p5Source.ts") : path.resolve("../p5Source.ts");
+  const refPath = fs.existsSync(path.resolve("./reference.generated.json")) ? path.resolve("./reference.generated.json") : path.resolve("../reference.generated.json");
   if (!fs.existsSync(p5SourcePath)) {
     run("node bundle-p5.mjs");
   }
@@ -52,7 +46,7 @@ async function main() {
   const { loadAllCoursesFromFiles } = await import("./build-content-courses.mjs");
   const courses = loadAllCoursesFromFiles();
   const reference = JSON.parse(fs.readFileSync(refPath, "utf8"));
-  const p5AssetsPath = path.resolve("./p5Assets.generated.json");
+  const p5AssetsPath = fs.existsSync(path.resolve("./p5Assets.generated.json")) ? path.resolve("./p5Assets.generated.json") : path.resolve("../p5Assets.generated.json");
   const p5Assets = fs.existsSync(p5AssetsPath)
     ? JSON.parse(fs.readFileSync(p5AssetsPath, "utf8"))
     : {};
