@@ -3,9 +3,15 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { execSync } from "child_process";
+import { createRequire } from "module";
+import { fileURLToPath } from "url";
 import { PINNED_P5_VERSION } from "./p5-version.mjs";
 
-const OUT_DIR = path.resolve("content");
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const OUT_DIR = path.resolve("./content");
 const PACK_FILE = path.join(OUT_DIR, "pack.json");
 const MANIFEST_FILE = path.join(OUT_DIR, "manifest.json");
 
@@ -18,39 +24,37 @@ function ensureDir(dir) {
 }
 
 function readP5Source() {
-  const src = fs.readFileSync(path.resolve("./p5Source.ts"), "utf8");
-  const match = src.match(/export const p5Source: string = (_p\.join\(["'][^"']*["']\)|(?:.|\n)*?)\n/s);
-  // The generated file uses _p array joined; reconstruct by evaluating.
-  // Simpler: extract array content and join.
+  const srcPath = path.resolve("./p5Source.ts");
+  const src = fs.readFileSync(srcPath, "utf8");
   const arrayMatch = src.match(/const _p = \[([\s\S]*?)\];/);
   if (!arrayMatch) throw new Error("Could not parse p5Source.ts");
-  // Use node to eval safely.
-  const joined = execSync(`node -e ${JSON.stringify(`const _p=[${arrayMatch[1]}];console.log(_p.join(""));`)}`, { encoding: "utf8" });
+  const joined = execSync(
+    `node -e ${JSON.stringify(
+      `const _p=[${arrayMatch[1]}];console.log(_p.join(""));`
+    )}`,
+    { encoding: "utf8" }
+  );
   return joined;
 }
 
-function main() {
+async function main() {
   ensureDir(OUT_DIR);
 
-  // Ensure artifacts exist.
-  try {
-    require.resolve(".././p5Source.ts");
-  } catch {
+  const p5SourcePath = path.resolve("./p5Source.ts");
+  const refPath = path.resolve("./reference.generated.json");
+  if (!fs.existsSync(p5SourcePath)) {
     run("node bundle-p5.mjs");
   }
-
-  try {
-    require.resolve(".././reference.generated.json");
-  } catch {
+  if (!fs.existsSync(refPath)) {
     run("node generate-reference.mjs");
   }
 
-  const mod = await import(new URL("./build-content-courses.mjs", import.meta.url));
-  const loadAllCoursesFromFiles = mod.loadAllCoursesFromFiles || mod.default?.loadAllCoursesFromFiles;
+  const { loadAllCoursesFromFiles } = await import("./build-content-courses.mjs");
   const courses = loadAllCoursesFromFiles();
-  const reference = JSON.parse(fs.readFileSync(path.resolve("./reference.generated.json"), "utf8"));
-  const p5Assets = fs.existsSync(path.resolve("./p5Assets.generated.json"))
-    ? JSON.parse(fs.readFileSync(path.resolve("./p5Assets.generated.json"), "utf8"))
+  const reference = JSON.parse(fs.readFileSync(refPath, "utf8"));
+  const p5AssetsPath = path.resolve("./p5Assets.generated.json");
+  const p5Assets = fs.existsSync(p5AssetsPath)
+    ? JSON.parse(fs.readFileSync(p5AssetsPath, "utf8"))
     : {};
   const p5Source = readP5Source();
 
@@ -81,7 +85,7 @@ function main() {
     contentVersion,
     generatedAt: pack.generatedAt,
     p5Version: PINNED_P5_VERSION,
-    packUrl: "content.json",
+    packUrl: "pack.json",
     packSize: Buffer.byteLength(packJson),
     packSha256: sha256,
     courseCount: Array.isArray(courses) ? courses.length : 0,
@@ -91,11 +95,6 @@ function main() {
   fs.writeFileSync(MANIFEST_FILE, JSON.stringify(manifest, null, 2), "utf8");
   console.log(`Wrote ${PACK_FILE} (${manifest.packSize} bytes)`);
   console.log(`Wrote ${MANIFEST_FILE}`);
-}
-
-async function awaitImport(spec) {
-  const mod = await import(new URL(spec, import.meta.url).href);
-  return mod;
 }
 
 main().catch((err) => {
