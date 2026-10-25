@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build-content.mjs"
+    "build": "node generate-reference.mjs && node bundle-p5.mjs && node build-content.mjs"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"

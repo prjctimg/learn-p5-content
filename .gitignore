@@ -1,2 +1,7 @@
 node_modules
 content
+p5Source.ts
+p5Version.ts
+reference.generated.json
+p5Assets.generated.json
+p5-join.js

@@ -24,20 +24,13 @@ function ensureDir(dir) {
 function readP5Source() {
   const srcPath = fs.existsSync(path.resolve("./p5Source.ts")) ? path.resolve("./p5Source.ts") : path.resolve("../p5Source.ts");
   const src = fs.readFileSync(srcPath, "utf8");
-  // New format uses _p array
-  if (src.includes("export const p5Source")) {
-    // Try to eval by extracting array
-    const arrayMatch = src.match(/const _p: string\[\] = \[\];([\s\S]*?)export const p5Source/);
-    if (arrayMatch) {
-      const assignments = arrayMatch[1];
-      const tmp = path.resolve("./p5-join.js");
-      fs.writeFileSync(tmp, `const _p=[];${assignments}\nprocess.stdout.write(_p.join(""));`);
-      const joined = execSync("node p5-join.js", { encoding: "utf8" });
-      try { fs.unlinkSync(tmp); } catch {}
-      return joined;
-    }
+  const start = src.indexOf("const _p = [");
+  const end = src.indexOf("\n];", start);
+  if (start === -1 || end === -1) {
+    throw new Error("Could not parse p5Source.ts");
   }
-  throw new Error("Could not parse p5Source.ts");
+  const body = src.slice(start + "const _p = [".length, end);
+  return JSON.parse(`[${body}]`).join("");
 }
 
 async function main() {
