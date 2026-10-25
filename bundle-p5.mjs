@@ -2,7 +2,7 @@
 // Fetches the pinned p5.js release (PINNED_P5_VERSION below) and regenerates
 // the vendored source artefacts:
 //   - ./p5Source.ts   (the minified p5 library as a string literal)
-//   - src/utils/p5Version.ts  (the resolved version string)
+//   - ./p5Version.ts  (the resolved version string)
 //
 // These files are gitignored build artefacts — regenerated on every fresh
 // install and on `npm start`. The version is pinned rather than resolved to
@@ -19,7 +19,7 @@ import { PINNED_P5_VERSION } from "./p5-version.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const P5_SOURCE_FILE = path.join(ROOT, "./p5Source.ts");
-const P5_VERSION_FILE = path.join(ROOT, "src/utils/p5Version.ts");
+const P5_VERSION_FILE = path.join(ROOT, "./p5Version.ts");
 
 function fetchText(url, redirects = 0) {
   return new Promise((resolve, reject) => {
