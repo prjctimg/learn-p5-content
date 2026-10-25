@@ -45,7 +45,8 @@ function main() {
     run("node generate-reference.mjs");
   }
 
-  const { loadAllCoursesFromFiles } = awaitImport("./build-content-courses.mjs");
+  const mod = await import(new URL("./build-content-courses.mjs", import.meta.url));
+  const loadAllCoursesFromFiles = mod.loadAllCoursesFromFiles || mod.default?.loadAllCoursesFromFiles;
   const courses = loadAllCoursesFromFiles();
   const reference = JSON.parse(fs.readFileSync(path.resolve("./reference.generated.json"), "utf8"));
   const p5Assets = fs.existsSync(path.resolve("./p5Assets.generated.json"))
