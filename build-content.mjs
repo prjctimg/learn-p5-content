@@ -24,14 +24,20 @@ function ensureDir(dir) {
 function readP5Source() {
   const srcPath = fs.existsSync(path.resolve("./p5Source.ts")) ? path.resolve("./p5Source.ts") : path.resolve("../p5Source.ts");
   const src = fs.readFileSync(srcPath, "utf8");
-  const arrayMatch = src.match(/const _p = \[([\s\S]*?)\];/);
-  if (!arrayMatch) throw new Error("Could not parse p5Source.ts");
-  const parts = arrayMatch[1];
-  const tmp = path.resolve("./p5-join.js");
-  fs.writeFileSync(tmp, `const _p=[${parts}];process.stdout.write(_p.join(""));`);
-  const joined = execSync("node p5-join.js", { encoding: "utf8" });
-  fs.unlinkSync(tmp);
-  return joined;
+  // New format uses _p array
+  if (src.includes("export const p5Source")) {
+    // Try to eval by extracting array
+    const arrayMatch = src.match(/const _p: string\[\] = \[\];([\s\S]*?)export const p5Source/);
+    if (arrayMatch) {
+      const assignments = arrayMatch[1];
+      const tmp = path.resolve("./p5-join.js");
+      fs.writeFileSync(tmp, `const _p=[];${assignments}\nprocess.stdout.write(_p.join(""));`);
+      const joined = execSync("node p5-join.js", { encoding: "utf8" });
+      try { fs.unlinkSync(tmp); } catch {}
+      return joined;
+    }
+  }
+  throw new Error("Could not parse p5Source.ts");
 }
 
 async function main() {
