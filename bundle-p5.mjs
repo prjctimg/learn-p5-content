@@ -30,6 +30,28 @@ const P5_VERSION_FILE = path.join(ROOT, "./p5Version.ts");
 const CDN_URL = `https://cdn.jsdelivr.net/npm/p5@${PINNED_P5_VERSION}/lib/p5.min.js`;
 const P5_BANNER_RE = /^\/\*![\s\S]*?\*\//;
 
+// esbuild transpiles syntax but not regular-expression features. p5 2.4 uses
+// a named-capture-group regex and one Unicode property escape, both newer than
+// the ES2015 target. Rewrite those two spots before minifying so older WebViews
+// can parse the runtime; validateRuntime rejects any leftovers.
+const P5_REGEX_COMPAT_REPLACEMENTS = [
+  {
+    label: "named capture groups",
+    from: "/^(?<type><[a-z]+>)(\\[(?<min>-?[.\\d]+),\\s*(?<max>-?[.\\d]+)\\])?$/",
+    to: "/^(<[a-z]+>)(\\[(-?[.\\d]+),\\s*(-?[.\\d]+)\\])?$/",
+  },
+  {
+    label: "named group access",
+    from: "this.type=n.groups.type;let{min:r,max:i}=n.groups;",
+    to: "this.type=n[1];let r=n[3],i=n[4];",
+  },
+  {
+    label: "Unicode property escape",
+    from: "/\\P{ASCII}/u",
+    to: "/[^\\x00-\\x7F]/",
+  },
+];
+
 function download(url) {
   return new Promise((resolve, reject) => {
     https
@@ -46,6 +68,25 @@ function download(url) {
       })
       .on("error", reject);
   });
+}
+
+function applyRegexCompat(source) {
+  let result = source;
+  for (const { label, from, to } of P5_REGEX_COMPAT_REPLACEMENTS) {
+    const first = result.indexOf(from);
+    if (first === -1) continue;
+    if (result.indexOf(from, first + from.length) !== -1) {
+      throw new Error(`p5.js has multiple ${label} occurrences; update bundle-p5.mjs.`);
+    }
+    result = result.slice(0, first) + to + result.slice(first + from.length);
+    console.log(`[bundle-p5] Rewrote ${label} for ES2015`);
+  }
+
+  const unsupported = result.match(/\(\?<|\\[pP]\{|\\k</);
+  if (unsupported) {
+    throw new Error(`p5.js still contains unsupported regex syntax: ${unsupported[0]}`);
+  }
+  return result;
 }
 
 function writeP5Source(src) {
@@ -76,7 +117,7 @@ async function buildRuntime(source) {
     throw new Error(`p5.js banner does not match pinned version ${PINNED_P5_VERSION}.`);
   }
 
-  const body = source.slice(bannerMatch[0].length);
+  const body = applyRegexCompat(source.slice(bannerMatch[0].length));
   const transformed = await transform(body, {
     loader: "js",
     target: "es2015",

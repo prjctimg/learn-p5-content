@@ -41,6 +41,24 @@ export const P5_RUNTIME_COMPAT = `/* ${P5_RUNTIME_COMPAT_MARKER} */
     root.globalThis = root;
   }
 
+  if (root.Intl && typeof root.Intl.getCanonicalLocales !== "function") {
+    root.Intl.getCanonicalLocales = function (locales) {
+      var list = locales === undefined ? [] : Array.isArray(locales) ? locales : [locales];
+      var result = [];
+      for (var i = 0; i < list.length; i++) {
+        if (typeof list[i] !== "string") {
+          throw new TypeError("Language ID should be string or object.");
+        }
+        var tag = list[i];
+        try {
+          tag = new root.Intl.DateTimeFormat(tag).resolvedOptions().locale;
+        } catch (error) {}
+        result.push(tag);
+      }
+      return result;
+    };
+  }
+
   function define(target, name, value) {
     if (typeof target[name] === "function") return;
     if (Object.defineProperty) {
@@ -87,6 +105,31 @@ export const P5_RUNTIME_COMPAT = `/* ${P5_RUNTIME_COMPAT_MARKER} */
     };
   }
 
+  if (typeof Object.entries !== "function") {
+    Object.entries = function (object) {
+      if (object == null) {
+        throw new TypeError("Cannot convert undefined or null to object");
+      }
+      var keys = Object.keys(Object(object));
+      var result = [];
+      for (var i = 0; i < keys.length; i++) {
+        result.push([keys[i], object[keys[i]]]);
+      }
+      return result;
+    };
+  }
+
+  if (typeof Object.values !== "function") {
+    Object.values = function (object) {
+      var entries = Object.entries(Object(object));
+      var result = [];
+      for (var i = 0; i < entries.length; i++) {
+        result.push(entries[i][1]);
+      }
+      return result;
+    };
+  }
+
   if (typeof Object.hasOwn !== "function") {
     Object.hasOwn = function (object, key) {
       return Object.prototype.hasOwnProperty.call(object, key);
@@ -105,6 +148,28 @@ export const P5_RUNTIME_COMPAT = `/* ${P5_RUNTIME_COMPAT_MARKER} */
       return value.split(String(search)).join(String(replacement));
     });
   }
+
+  function pad(value, targetLength, padString, atStart) {
+    var length = targetLength === undefined ? 0 : Number(targetLength);
+    if (length !== length) length = 0;
+    length = Math.floor(length);
+    if (length <= value.length) return value;
+    var padding = padString === undefined ? " " : String(padString);
+    if (padding.length === 0) return value;
+    var needed = length - value.length;
+    var fill = "";
+    while (fill.length < needed) fill += padding;
+    fill = fill.slice(0, needed);
+    return atStart ? fill + value : value + fill;
+  }
+
+  define(String.prototype, "padStart", function (targetLength, padString) {
+    return pad(String(this), targetLength, padString, true);
+  });
+
+  define(String.prototype, "padEnd", function (targetLength, padString) {
+    return pad(String(this), targetLength, padString, false);
+  });
 
   define(Array.prototype, "at", function (index) {
     var length = this.length;
