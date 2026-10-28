@@ -15,6 +15,9 @@ on:
       - "generate-reference.mjs"
       - "bundle-p5.mjs"
       - "p5-version.mjs"
+      - "p5-runtime-compat.mjs"
+      - "package.json"
+      - "package-lock.json"
 
 permissions:
   contents: write

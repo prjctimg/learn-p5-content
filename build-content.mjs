@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 import { PINNED_P5_VERSION } from "./p5-version.mjs";
+import { P5_RUNTIME_COMPAT_MARKER } from "./p5-runtime-compat.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,26 +34,83 @@ function readP5Source() {
   return JSON.parse(`[${body}]`).join("");
 }
 
+// p5 v1 curve helpers were renamed in v2. Course code must never use them.
+const P5_V1_ONLY_SYMBOLS = new Map([
+  ["curve", "spline"],
+  ["curvePoint", "splinePoint"],
+  ["curveTangent", "splineTangent"],
+  ["curveTightness", "splineProperty"],
+  ["curveVertex", "splineVertex"],
+  ["curveDetail", "splineProperty"],
+]);
+
+function validateCourseCode(value, location) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => validateCourseCode(item, `${location}[${index}]`));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+
+  for (const [key, child] of Object.entries(value)) {
+    const childLocation = `${location}.${key}`;
+    if ((key === "startingCode" || key === "solution") && typeof child === "string") {
+      for (const [name, replacement] of P5_V1_ONLY_SYMBOLS) {
+        if (new RegExp(`\\b${name}\\s*\\(`).test(child)) {
+          throw new Error(
+            `${childLocation} uses p5 v1 ${name}(); use ${replacement}() instead`
+          );
+        }
+      }
+      continue;
+    }
+    validateCourseCode(child, childLocation);
+  }
+}
+
+function validateP5Source(source) {
+  if (!source.startsWith(`/*! p5.js v${PINNED_P5_VERSION}`)) {
+    throw new Error(`p5 source does not match pinned version ${PINNED_P5_VERSION}`);
+  }
+  if (!source.includes(P5_RUNTIME_COMPAT_MARKER)) {
+    throw new Error("p5 source is missing the ES5 compatibility shim");
+  }
+  if (!source.trimEnd().endsWith(");")) {
+    throw new Error("p5 source is truncated");
+  }
+  if (source.length < 100_000) {
+    throw new Error(`p5 source is incomplete (${source.length} chars)`);
+  }
+}
+
 async function main() {
   ensureDir(OUT_DIR);
 
-  const p5SourcePath = fs.existsSync(path.resolve("./p5Source.ts")) ? path.resolve("./p5Source.ts") : path.resolve("../p5Source.ts");
-  const refPath = fs.existsSync(path.resolve("./reference.generated.json")) ? path.resolve("./reference.generated.json") : path.resolve("../reference.generated.json");
-  if (!fs.existsSync(p5SourcePath)) {
+  if (!fs.existsSync(path.resolve("./p5Source.ts"))) {
     run("node bundle-p5.mjs");
   }
-  if (!fs.existsSync(refPath)) {
+  if (!fs.existsSync(path.resolve("./reference.generated.json"))) {
     run("node generate-reference.mjs");
   }
 
+  const p5SourcePath = fs.existsSync(path.resolve("./p5Source.ts"))
+    ? path.resolve("./p5Source.ts")
+    : path.resolve("../p5Source.ts");
+  const refPath = fs.existsSync(path.resolve("./reference.generated.json"))
+    ? path.resolve("./reference.generated.json")
+    : path.resolve("../reference.generated.json");
+  const p5AssetsPath = fs.existsSync(path.resolve("./p5Assets.generated.json"))
+    ? path.resolve("./p5Assets.generated.json")
+    : path.resolve("../p5Assets.generated.json");
+
   const { loadAllCoursesFromFiles } = await import("./build-content-courses.mjs");
   const courses = loadAllCoursesFromFiles();
+  validateCourseCode(courses, "courses");
   const reference = JSON.parse(fs.readFileSync(refPath, "utf8"));
-  const p5AssetsPath = fs.existsSync(path.resolve("./p5Assets.generated.json")) ? path.resolve("./p5Assets.generated.json") : path.resolve("../p5Assets.generated.json");
   const p5Assets = fs.existsSync(p5AssetsPath)
     ? JSON.parse(fs.readFileSync(p5AssetsPath, "utf8"))
     : {};
   const p5Source = readP5Source();
+  validateP5Source(p5Source);
 
   const contentVersion =
     process.env.CONTENT_VERSION ||
