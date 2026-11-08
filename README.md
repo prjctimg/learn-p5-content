@@ -4,6 +4,13 @@ Authored content for the Learn P5 app: course YAML, the p5.js runtime bundle,
 generated reference data, and the validation checks that guard them. The app
 downloads the published pack (`content-latest` release) at runtime.
 
+The p5.js runtime ships as its own artifact, `p5.min.js`, alongside
+`pack.json` in the same release. The app downloads it once, caches it, and
+loads it as a separate script file in previews rather than inlining it into
+every exercise's HTML. The bundle is produced by `bundle-p5.mjs`, which
+downloads the pinned jsDelivr release, transpiles it to ES2015, and prepends
+the ES5 compatibility shim.
+
 ## Checks
 
 Course content changes must keep the exercise invariants green and the symbol

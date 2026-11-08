@@ -23,15 +23,11 @@ function ensureDir(dir) {
 }
 
 function readP5Source() {
-  const srcPath = fs.existsSync(path.resolve("./p5Source.ts")) ? path.resolve("./p5Source.ts") : path.resolve("../p5Source.ts");
-  const src = fs.readFileSync(srcPath, "utf8");
-  const start = src.indexOf("const _p = [");
-  const end = src.indexOf("\n];", start);
-  if (start === -1 || end === -1) {
-    throw new Error("Could not parse p5Source.ts");
+  const srcPath = path.resolve("./content/p5.min.js");
+  if (!fs.existsSync(srcPath)) {
+    throw new Error("p5.min.js is missing; run node bundle-p5.mjs first");
   }
-  const body = src.slice(start + "const _p = [".length, end);
-  return JSON.parse(`[${body}]`).join("");
+  return fs.readFileSync(srcPath, "utf8");
 }
 
 // p5 v1 curve helpers were renamed in v2. Course code must never use them.
@@ -85,16 +81,14 @@ function validateP5Source(source) {
 async function main() {
   ensureDir(OUT_DIR);
 
-  if (!fs.existsSync(path.resolve("./p5Source.ts"))) {
+  if (!fs.existsSync(path.resolve("./content/p5.min.js"))) {
     run("node bundle-p5.mjs");
   }
   if (!fs.existsSync(path.resolve("./reference.generated.json"))) {
     run("node generate-reference.mjs");
   }
 
-  const p5SourcePath = fs.existsSync(path.resolve("./p5Source.ts"))
-    ? path.resolve("./p5Source.ts")
-    : path.resolve("../p5Source.ts");
+  const p5SourcePath = path.resolve("./content/p5.min.js");
   const refPath = fs.existsSync(path.resolve("./reference.generated.json"))
     ? path.resolve("./reference.generated.json")
     : path.resolve("../reference.generated.json");
@@ -117,10 +111,9 @@ async function main() {
     new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
 
   const pack = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     contentVersion,
     generatedAt: new Date().toISOString(),
-    p5: { version: PINNED_P5_VERSION, source: p5Source },
     p5Assets,
     courses,
     reference: {
@@ -134,11 +127,15 @@ async function main() {
   fs.writeFileSync(PACK_FILE, packJson, "utf8");
 
   const sha256 = crypto.createHash("sha256").update(packJson).digest("hex");
+  const p5Sha256 = crypto.createHash("sha256").update(p5Source).digest("hex");
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     contentVersion,
     generatedAt: pack.generatedAt,
     p5Version: PINNED_P5_VERSION,
+    p5Url: "p5.min.js",
+    p5Size: Buffer.byteLength(p5Source, "utf8"),
+    p5Sha256,
     packUrl: "pack.json",
     packSize: Buffer.byteLength(packJson),
     packSha256: sha256,

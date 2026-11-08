@@ -73,3 +73,4 @@ jobs:
           files: |
             content/manifest.json
             content/pack.json
+            content/p5.min.js
