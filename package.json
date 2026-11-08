@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "node generate-reference.mjs && node bundle-p5.mjs && node build-content.mjs"
+    "build": "node generate-reference.mjs && node bundle-p5.mjs && node build-content.mjs",
+    "bundle-validation": "node bundle-validation.mjs",
+    "check-exercises": "node check-exercises.mjs",
+    "check-symbols": "node check-symbols.mjs",
+    "check": "npm run bundle-validation && npm run check-exercises && npm run check-symbols"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"

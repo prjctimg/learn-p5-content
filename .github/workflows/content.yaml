@@ -40,6 +40,18 @@ jobs:
       - name: Generate reference data
         run: node generate-reference.mjs
 
+      - name: Bundle validation core
+        run: node bundle-validation.mjs
+
+      # check-exercises uses @lezer/javascript's parser, which is a dev-only
+      # tool (not part of the pack build) and intentionally not locked: install
+      # it ad hoc so the committed lockfile stays exactly as published.
+      - name: Install lezer parser for exercise checks
+        run: npm install --no-save @lezer/javascript@1.5.4
+
+      - name: Check exercise invariants
+        run: node check-exercises.mjs && node check-symbols.mjs
+
       - name: Bundle p5.js
         run: node bundle-p5.mjs
 

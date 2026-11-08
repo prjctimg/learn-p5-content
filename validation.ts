@@ -1,0 +1,638 @@
+import type { ValidationRule } from "../../data/types";
+
+/**
+ * Single source of truth for exercise validation.
+ *
+ * All validation semantics live here and nowhere else. The module is
+ * dependency-free at runtime: it walks an opaque syntax-tree provided by the
+ * caller, so the exact same code runs inside the exercise WebView (which reuses
+ * the CodeMirror tree that is already on the page) and inside the Node build
+ * checks (which feed it a @lezer/javascript parse).
+ *
+ * Tree shape conventions follow @lezer/javascript:
+ *   - CallExpression / NewExpression -> first child is VariableName (plain
+ *     call) or MemberExpression (member call); a direct `ArgList` child holds
+ *     the arguments.
+ *   - FunctionDeclaration -> first VariableDefinition child is the name.
+ *   - VariableDeclaration -> VariableDefinition whose initializer is an
+ *     ArrowFunction / FunctionExpression is a function definition.
+ *   - MethodDeclaration / Property / FieldDeclaration -> a PropertyDefinition
+ *     name whose value is (or is followed by) a function body.
+ */
+
+export type RuleType =
+  | "functionCall"
+  | "functionExists"
+  | "canvasSize"
+  | "pixelMatch"
+  | "expectedPixels";
+
+export const RULE_TYPES: readonly RuleType[] = [
+  "functionCall",
+  "functionExists",
+  "canvasSize",
+  "pixelMatch",
+  "expectedPixels",
+];
+
+type FieldKind =
+  | "string"
+  | "string?"
+  | "number"
+  | "number?"
+  | "boolean?"
+  | "num3"
+  | "points";
+
+export interface RuleSchema {
+  required: string[];
+  fields: Record<string, FieldKind>;
+}
+
+export const RULE_SCHEMAS: Record<string, RuleSchema> = {
+  functionCall: {
+    required: ["name"],
+    fields: { name: "string", exactArgs: "number?", minArgs: "number?" },
+  },
+  functionExists: {
+    required: ["name"],
+    fields: { name: "string" },
+  },
+  canvasSize: {
+    required: ["width", "height"],
+    fields: { width: "number", height: "number" },
+  },
+  pixelMatch: {
+    required: ["x", "y", "expected"],
+    fields: { x: "number", y: "number", expected: "num3", tolerance: "number?" },
+  },
+  expectedPixels: {
+    required: ["points"],
+    fields: { points: "points", minPassFraction: "number?" },
+  },
+};
+
+/** Default per-channel tolerance used by pixel rules when none is set. */
+export const PIXEL_DEFAULT_TOLERANCE = 30;
+
+/** Default minPassFraction used by expectedPixels when none is set. */
+export const PIXEL_DEFAULT_MIN_PASS_FRACTION = 0.9;
+
+// ---------------------------------------------------------------------------
+// Syntax-tree adapter (structural typing keeps lezer out of the runtime bundle)
+// ---------------------------------------------------------------------------
+
+export interface TreeCursorLike {
+  readonly type: { readonly name: string };
+  readonly from: number;
+  readonly to: number;
+  firstChild(): boolean;
+  nextSibling(): boolean;
+  parent(): boolean;
+}
+
+export interface TreeAdapter {
+  cursor(): TreeCursorLike;
+  slice(from: number, to: number): string;
+}
+
+// ---------------------------------------------------------------------------
+// Analysis
+// ---------------------------------------------------------------------------
+
+export interface ParsedCall {
+  name: string;
+  args: number;
+  member: boolean;
+  from: number;
+  to: number;
+}
+
+export interface Analysis {
+  calls: ParsedCall[];
+  functionDefs: Set<string>;
+  canvas: { width: number; height: number } | null;
+  canvasPresent: boolean;
+}
+
+const FUNCTION_KINDS = new Set(["ArrowFunction", "FunctionExpression"]);
+const ARG_IGNORED = new Set(["(", ")", ",", "...", "Spread"]);
+
+/**
+ * Locate the callee expression of a call/new node. For a CallExpression the
+ * callee is the first child; for a NewExpression it follows the `new` keyword.
+ */
+function findCallee(
+  cursor: TreeCursorLike
+): { name: string; from: number; to: number } | null {
+  if (!cursor.firstChild()) return null;
+  do {
+    const n = cursor.type.name;
+    if (n === "VariableName" || n === "MemberExpression") {
+      const hit = { name: n, from: cursor.from, to: cursor.to };
+      cursor.parent();
+      return hit;
+    }
+  } while (cursor.nextSibling());
+  cursor.parent();
+  return null;
+}
+
+/** Count argument expressions directly inside the ArgList the cursor is on. */
+function countArguments(cursor: TreeCursorLike): number {
+  let count = 0;
+  if (!cursor.firstChild()) return 0;
+  do {
+    if (!ARG_IGNORED.has(cursor.type.name)) count++;
+  } while (cursor.nextSibling());
+  cursor.parent();
+  return count;
+}
+
+/** Collect definitions out of a VariableDeclaration (var/let/const = fn). */
+function collectVariableFunctionNames(
+  cursor: TreeCursorLike,
+  slice: TreeAdapter["slice"],
+  defs: Set<string>
+): void {
+  if (!cursor.firstChild()) return;
+  let pending: { from: number; to: number } | null = null;
+  do {
+    const n = cursor.type.name;
+    if (n === "VariableDefinition") {
+      pending = { from: cursor.from, to: cursor.to };
+    } else if (FUNCTION_KINDS.has(n) && pending) {
+      defs.add(slice(pending.from, pending.to));
+      pending = null;
+    } else if (n !== "Equals" && n !== "," && n !== ";") {
+      pending = null;
+    }
+  } while (cursor.nextSibling());
+  cursor.parent();
+}
+
+/** Collect definitions out of Property / FieldDeclaration / MethodDeclaration. */
+function collectPropertyFunctionName(
+  cursor: TreeCursorLike,
+  slice: TreeAdapter["slice"],
+  defs: Set<string>
+): void {
+  if (!cursor.firstChild()) return;
+  let pending: { from: number; to: number } | null = null;
+  do {
+    const n = cursor.type.name;
+    if (n === "PropertyDefinition" || n === "FieldName") {
+      pending = { from: cursor.from, to: cursor.to };
+    } else if (FUNCTION_KINDS.has(n)) {
+      if (pending) defs.add(slice(pending.from, pending.to));
+      pending = null;
+    } else if (n === "ParamList") {
+      if (pending) defs.add(slice(pending.from, pending.to));
+      pending = null;
+    } else if (n !== ":" && n !== "," && n !== ";" && n !== "=" && n !== "static") {
+      pending = null;
+    }
+  } while (cursor.nextSibling());
+  cursor.parent();
+}
+
+function visit(cursor: TreeCursorLike, depth: number, fn: (c: TreeCursorLike) => void): void {
+  if (depth > 500) return;
+  fn(cursor);
+  if (cursor.firstChild()) {
+    do {
+      visit(cursor, depth + 1, fn);
+    } while (cursor.nextSibling());
+    cursor.parent();
+  }
+}
+
+export function analyze(adapter: TreeAdapter): Analysis {
+  const calls: ParsedCall[] = [];
+  const functionDefs = new Set<string>();
+  let canvas: { width: number; height: number } | null = null;
+  let canvasPresent = false;
+
+  const cursor = adapter.cursor();
+
+  visit(cursor, 0, (c) => {
+    switch (c.type.name) {
+      case "CallExpression":
+      case "NewExpression": {
+        const callee = findCallee(c);
+        if (!callee) break;
+        let name: string | null = null;
+        let member = false;
+        if (callee.name === "VariableName") {
+          name = adapter.slice(callee.from, callee.to);
+        } else if (callee.name === "MemberExpression") {
+          member = true;
+          const text = adapter.slice(callee.from, callee.to);
+          const dot = text.lastIndexOf(".");
+          if (dot !== -1) {
+            name = text.slice(dot + 1).trim() || null;
+          }
+        }
+        if (name === null) break;
+
+        let args = 0;
+        if (c.firstChild()) {
+          do {
+            if ((c.type.name as string) === "ArgList") {
+              args = countArguments(c);
+              break;
+            }
+          } while (c.nextSibling());
+          c.parent();
+        }
+
+        calls.push({ name, args, member, from: c.from, to: c.to });
+
+        if (!member && name === "createCanvas") {
+          canvasPresent = true;
+          const size = collectCanvasNumbers(c, adapter);
+          if (size) canvas = size;
+        }
+        break;
+      }
+      case "FunctionDeclaration": {
+        if (!c.firstChild()) break;
+        do {
+          if ((c.type.name as string) === "VariableDefinition") {
+            functionDefs.add(adapter.slice(c.from, c.to));
+            break;
+          }
+        } while (c.nextSibling());
+        c.parent();
+        break;
+      }
+      case "VariableDeclaration": {
+        collectVariableFunctionNames(c, adapter.slice, functionDefs);
+        break;
+      }
+      case "MethodDeclaration":
+      case "Property":
+      case "FieldDeclaration": {
+        collectPropertyFunctionName(c, adapter.slice, functionDefs);
+        break;
+      }
+    }
+  });
+
+  return { calls, functionDefs, canvas, canvasPresent };
+}
+
+/** Extract literal (width, height) from a createCanvas call, if possible. */
+function collectCanvasNumbers(
+  cursor: TreeCursorLike,
+  adapter: TreeAdapter
+): { width: number; height: number } | null {
+  const numbers: number[] = [];
+  if (!cursor.firstChild()) return null;
+  do {
+    if (cursor.type.name === "ArgList") {
+      if (!cursor.firstChild()) return null;
+      do {
+        const n = cursor.type.name as string;
+        if (n === "Number" || n === "UnaryExpression") {
+          const num = Number(adapter.slice(cursor.from, cursor.to));
+          if (isFinite(num)) numbers.push(num);
+        }
+      } while (cursor.nextSibling());
+      cursor.parent();
+      break;
+    }
+  } while (cursor.nextSibling());
+  cursor.parent();
+  if (numbers.length >= 2) return { width: numbers[0], height: numbers[1] };
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Rule evaluation (synchronous rules only; pixel rules are renderer-checked)
+// ---------------------------------------------------------------------------
+
+export interface EvalResult {
+  passed: boolean;
+  reason: string;
+}
+
+export function hasPixelRules(rules: ValidationRule[]): boolean {
+  return rules.some(
+    (r) => r.type === "pixelMatch" || r.type === "expectedPixels"
+  );
+}
+
+/**
+ * Names of global p5 calls used by the code. Member calls such as
+ * `arr.map()` are ignored, and non-p5 helpers count as user code.
+ */
+export function p5CallNames(
+  analysis: Analysis,
+  p5Names: readonly string[]
+): Set<string> {
+  const known = new Set(p5Names);
+  const names = new Set<string>();
+  for (const call of analysis.calls) {
+    if (!call.member && known.has(call.name)) names.add(call.name);
+  }
+  return names;
+}
+
+/**
+ * Global p5 calls that are not part of `allowed`. Task solutions and starting
+ * code define the allowed set, so extra drawing calls cannot slip through.
+ */
+export function unexpectedCalls(
+  analysis: Analysis,
+  allowed: ReadonlySet<string>,
+  p5Names: readonly string[]
+): string[] {
+  const known = new Set(p5Names);
+  const extra = new Set<string>();
+  for (const call of analysis.calls) {
+    if (!call.member && known.has(call.name) && !allowed.has(call.name)) {
+      extra.add(call.name);
+    }
+  }
+  return [...extra].sort();
+}
+
+export function evaluateRules(analysis: Analysis, rules: ValidationRule[]): EvalResult {
+  for (const rule of rules) {
+    switch (rule.type) {
+      case "functionCall": {
+        const matches = analysis.calls.filter((c) => c.name === rule.name);
+        if (matches.length === 0) {
+          return { passed: false, reason: `Add a ${rule.name}() call` };
+        }
+        if (typeof rule.exactArgs === "number") {
+          const ok = matches.some((c) => c.args === rule.exactArgs);
+          if (!ok) {
+            return {
+              passed: false,
+              reason: `${rule.name}() needs ${rule.exactArgs} arguments`,
+            };
+          }
+        }
+        if (typeof rule.minArgs === "number") {
+          const minArgs = rule.minArgs;
+          const ok = matches.some((c) => c.args >= minArgs);
+          if (!ok) {
+            return {
+              passed: false,
+              reason: `${rule.name}() needs at least ${minArgs} arguments`,
+            };
+          }
+        }
+        break;
+      }
+      case "functionExists": {
+        if (!analysis.functionDefs.has(rule.name)) {
+          return { passed: false, reason: `Define a ${rule.name}() function` };
+        }
+        break;
+      }
+      case "canvasSize": {
+        if (!analysis.canvasPresent) {
+          return { passed: false, reason: "Use createCanvas() to set canvas size" };
+        }
+        if (
+          !analysis.canvas ||
+          analysis.canvas.width !== rule.width ||
+          analysis.canvas.height !== rule.height
+        ) {
+          return { passed: false, reason: `Canvas should be ${rule.width}x${rule.height}` };
+        }
+        break;
+      }
+      case "pixelMatch":
+      case "expectedPixels":
+        // Handled by the renderer after the sketch runs.
+        break;
+    }
+  }
+  return { passed: true, reason: "" };
+}
+
+// ---------------------------------------------------------------------------
+// Rule schema validation (catches typos such as `excatArgs`)
+// ---------------------------------------------------------------------------
+
+function kindCheck(kind: FieldKind, value: unknown): string | null {
+  switch (kind) {
+    case "string":
+      return typeof value === "string" ? null : "must be a string";
+    case "string?":
+      return value === undefined || typeof value === "string" ? null : "must be a string";
+    case "number":
+      return typeof value === "number" && isFinite(value)
+        ? null
+        : "must be a finite number";
+    case "number?":
+      return value === undefined ||
+        (typeof value === "number" && isFinite(value))
+        ? null
+        : "must be a finite number";
+    case "boolean?":
+      return value === undefined || typeof value === "boolean"
+        ? null
+        : "must be a boolean";
+    case "num3":
+      return Array.isArray(value) &&
+        value.length === 3 &&
+        value.every((v) => typeof v === "number" && isFinite(v))
+        ? null
+        : "must be an [r, g, b] array of three numbers";
+    case "points":
+      return Array.isArray(value) &&
+        value.length > 0 &&
+        value.every(
+          (p) =>
+            p &&
+            typeof p === "object" &&
+            typeof (p as { x?: unknown }).x === "number" &&
+            typeof (p as { y?: unknown }).y === "number" &&
+            Array.isArray((p as { expected?: unknown }).expected) &&
+            ((p as { expected: unknown[] }).expected).length === 3 &&
+            ((p as { expected: unknown[] }).expected).every((v: unknown) => typeof v === "number")
+        )
+        ? null
+        : "must be a non-empty array of {x, y, expected, tolerance?}";
+  }
+}
+
+/**
+ * Returns human-readable problems with a task's validation rules. Any problem
+ * means the task's rules are malformed and should be treated as unsatisfiable
+ * rather than silently weakened.
+ */
+export function schemaErrors(rules: ValidationRule[] | undefined | null): string[] {
+  const problems: string[] = [];
+  const list = rules ?? [];
+  for (let i = 0; i < list.length; i++) {
+    const rule = list[i];
+    if (!rule || typeof rule !== "object" || typeof rule.type !== "string") {
+      problems.push(`rule[${i}]: missing a string 'type'`);
+      continue;
+    }
+    const schema = RULE_SCHEMAS[rule.type];
+    if (!schema) {
+      problems.push(`rule[${i}]: unknown rule type '${rule.type}'`);
+      continue;
+    }
+    for (const req of schema.required) {
+      if (!(req in rule)) {
+        problems.push(`rule[${i}] (${rule.type}): missing required field '${req}'`);
+      }
+    }
+    for (const key of Object.keys(rule)) {
+      if (key === "type") continue;
+      const kind = schema.fields[key];
+      if (!kind) {
+        problems.push(`rule[${i}] (${rule.type}): unknown field '${key}'`);
+        continue;
+      }
+      const err = kindCheck(kind, (rule as Record<string, unknown>)[key]);
+      if (err) {
+        problems.push(`rule[${i}] (${rule.type}): field '${key}' ${err}`);
+      }
+    }
+  }
+  return problems;
+}
+
+// ---------------------------------------------------------------------------
+// Pixel matching helpers (shared by the renderer and tests)
+// ---------------------------------------------------------------------------
+
+export interface PixelSample {
+  x: number;
+  y: number;
+  expected: [number, number, number];
+  tolerance?: number;
+}
+
+/**
+ * Per-channel max-difference color comparison. A pixel passes when every
+ * channel is within `tolerance` of its expected value (0-255).
+ */
+export function pixelMatches(
+  actual: readonly [number, number, number] | Uint8ClampedArray,
+  expected: readonly [number, number, number],
+  tolerance: number
+): boolean {
+  const dr = Math.abs(actual[0] - expected[0]);
+  const dg = Math.abs(actual[1] - expected[1]);
+  const db = Math.abs(actual[2] - expected[2]);
+  return dr <= tolerance && dg <= tolerance && db <= tolerance;
+}
+
+export function effectiveTolerance(pt: PixelSample): number {
+  return pt.tolerance !== undefined ? pt.tolerance : PIXEL_DEFAULT_TOLERANCE;
+}
+
+export function effectiveMinPassFraction(minPassFraction?: number): number {
+  return minPassFraction !== undefined
+    ? minPassFraction
+    : PIXEL_DEFAULT_MIN_PASS_FRACTION;
+}
+
+// ---------------------------------------------------------------------------
+// Solution code comparison (shared by the bridge fallback path, the dev
+// checks, and tests). Strips comments and string literals so that whitespace
+// and comment differences never count against the user.
+// ---------------------------------------------------------------------------
+
+function stripCode(src: string, keepStrings: boolean): string {
+  let out = "";
+  let i = 0;
+  const n = src.length;
+  while (i < n) {
+    const c = src[i];
+    const c2 = src[i + 1];
+    if (c === "/" && c2 === "/") {
+      while (i < n && src[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && c2 === "*") {
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      if (keepStrings) out += quote;
+      i++;
+      while (i < n) {
+        if (src[i] === "\\") {
+          if (keepStrings) out += src[i] + (src[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        if (src[i] === quote) {
+          if (keepStrings) out += quote;
+          i++;
+          break;
+        }
+        if (keepStrings) out += src[i];
+        i++;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+/** Strip comments while preserving string contents and delimiters. */
+export function stripIgnoredRegions(src: string): string {
+  return stripCode(src, true);
+}
+
+/** Strip comments and strings for symbol scans. */
+export function stripCommentsAndStrings(src: string): string {
+  return stripCode(src, false);
+}
+
+export function normalizeForCompare(src: string): string {
+  return stripIgnoredRegions(src).replace(/\s+/g, " ").trim();
+}
+
+/** Remove insignificant whitespace while preserving string literals and token boundaries. */
+function compactForCompare(src: string): string {
+  const code = stripIgnoredRegions(src);
+  let out = "";
+  let quote: string | null = null;
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (quote) {
+      out += c;
+      if (c === "\\") {
+        out += code[++i] ?? "";
+      } else if (c === quote) {
+        quote = null;
+      }
+    } else if (c === '"' || c === "'" || c === "`") {
+      quote = c;
+      out += c;
+    } else if (/\s/.test(c)) {
+      let j = i + 1;
+      while (j < code.length && /\s/.test(code[j])) j++;
+      const prev = out[out.length - 1] ?? "";
+      const next = code[j] ?? "";
+      if (/[\w$]/.test(prev) && /[\w$]/.test(next)) out += " ";
+      i = j - 1;
+    } else {
+      out += c;
+    }
+  }
+  return out.trim();
+}
+
+export function codeMatchesSolution(userCode: string, solutionCode: string): boolean {
+  if (!solutionCode) return true;
+  return compactForCompare(userCode) === compactForCompare(solutionCode);
+}
