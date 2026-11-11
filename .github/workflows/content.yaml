@@ -12,6 +12,7 @@ on:
     paths:
       - "courses/**"
       - "build-content*.mjs"
+      - "description-format.mjs"
       - "generate-reference.mjs"
       - "bundle-p5.mjs"
       - "p5-version.mjs"
@@ -36,6 +37,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Test reference formatting
+        run: npm test
 
       - name: Generate reference data
         run: node generate-reference.mjs

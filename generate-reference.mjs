@@ -4,6 +4,11 @@ import path from "path";
 import os from "os";
 import jsyaml from "js-yaml";
 import { PINNED_P5_VERSION } from "./p5-version.mjs";
+import {
+  descriptionToMarkdown,
+  htmlToText,
+  normalizeExampleCode,
+} from "./description-format.mjs";
 
 const WEBSITE_REPO = "https://github.com/processing/p5.js-website.git";
 const REF_DIR = "src/content/reference/en";
@@ -97,32 +102,13 @@ function parseMdxFrontmatter(content) {
   return jsyaml.load(match[1]);
 }
 
-function stripHtml(html) {
-  if (!html) return "";
-  return html
-    .replace(/<p>/gi, "")
-    .replace(/<\/p>/gi, "")
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/<code>/gi, "")
-    .replace(/<\/code>/gi, "")
-    .replace(/<a[^>]*>/gi, "")
-    .replace(/<\/a>/gi, "")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-}
-
 function flattenParams(params) {
   if (!Array.isArray(params)) return [];
   return params.map((p) => ({
     name: p.name,
     type: p.type || "Any",
     optional: p.optional === 1 || p.optional === true,
-    description: stripHtml(p.description || ""),
+    description: htmlToText(p.description || ""),
   }));
 }
 
@@ -185,26 +171,38 @@ function writeOutput(output) {
 }
 
 function generateFromRepo() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "p5-ref-"));
-  console.log(`Cloning ${WEBSITE_REPO} ...`);
+  const localRepo = process.env.P5_WEBSITE_DIR
+    ? path.resolve(process.env.P5_WEBSITE_DIR)
+    : null;
+  let tmpDir = null;
+  let repoRoot = localRepo;
 
-  try {
-    execSync(
-      `git clone --depth 1 --single-branch "${WEBSITE_REPO}" "${tmpDir}"`,
-      { stdio: "pipe", timeout: 120_000 }
-    );
-  } catch (e) {
-    console.error("Failed to clone p5.js-website repo:", e.message);
-    console.log("Falling back to stub data...");
-    generateStub();
-    return;
+  if (localRepo && fs.existsSync(localRepo)) {
+    console.log(`Using local p5.js-website checkout: ${localRepo}`);
+  } else {
+    if (localRepo) console.warn(`P5_WEBSITE_DIR not found: ${localRepo}`);
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "p5-ref-"));
+    repoRoot = tmpDir;
+    console.log(`Cloning ${WEBSITE_REPO} ...`);
+
+    try {
+      execSync(
+        `git clone --depth 1 --single-branch "${WEBSITE_REPO}" "${tmpDir}"`,
+        { stdio: "pipe", timeout: 120_000 }
+      );
+    } catch (e) {
+      console.error("Failed to clone p5.js-website repo:", e.message);
+      console.log("Falling back to stub data...");
+      generateStub();
+      return;
+    }
   }
 
-  const refRoot = path.join(tmpDir, REF_DIR);
+  const refRoot = path.join(repoRoot, REF_DIR);
   if (!fs.existsSync(refRoot)) {
     console.error(`Reference directory not found: ${refRoot}`);
     console.log("Falling back to stub data...");
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
     generateStub();
     return;
   }
@@ -228,7 +226,7 @@ function generateFromRepo() {
   // public/assets so we can resolve `/assets/<name>` references and bundle
   // them as base64 data: URIs in a separate asset map (placeholders are
   // inserted into example strings and substituted at render time).
-  const assetsRoot = path.join(tmpDir, ASSETS_DIR);
+  const assetsRoot = path.join(repoRoot, ASSETS_DIR);
   const assetByBasename = new Map();
   if (fs.existsSync(assetsRoot)) {
     function walkAssets(dir) {
@@ -316,7 +314,7 @@ function generateFromRepo() {
       submodule: frontmatter.submodule || null,
       class: cls,
       itemtype: frontmatter.itemtype || "method",
-      description: stripHtml(frontmatter.description || ""),
+      description: descriptionToMarkdown(frontmatter.description || ""),
       syntax: buildSyntax(name, params),
       params,
       overloads: overloads.length > 0 ? overloads : undefined,
@@ -330,7 +328,7 @@ function generateFromRepo() {
         : [frontmatter.example];
       symbol.examples = examples
         .map((ex) => {
-          const raw = (typeof ex === "string" ? ex.trim() : String(ex).trim());
+          const raw = normalizeExampleCode(typeof ex === "string" ? ex : String(ex));
           if (!raw) return "";
           const inlined = inlineAssets(raw);
           if (inlined !== raw) assetsInlined++;
@@ -356,7 +354,7 @@ function generateFromRepo() {
   const output = buildOutput(byName, byModule, byClass);
   writeOutput(output);
 
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
 function generateStub() {
