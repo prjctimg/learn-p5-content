@@ -11,12 +11,7 @@ on:
     branches: [main]
     paths:
       - "courses/**"
-      - "build-content*.mjs"
-      - "description-format.mjs"
-      - "generate-reference.mjs"
-      - "bundle-p5.mjs"
-      - "p5-version.mjs"
-      - "p5-runtime-compat.mjs"
+      - "scripts/**"
       - "package.json"
       - "package-lock.json"
 
@@ -42,10 +37,10 @@ jobs:
         run: npm test
 
       - name: Generate reference data
-        run: node generate-reference.mjs
+        run: node scripts/build/reference.mjs
 
       - name: Bundle validation core
-        run: node bundle-validation.mjs
+        run: node scripts/bundle/validation.mjs
 
       # check-exercises uses @lezer/javascript's parser, which is a dev-only
       # tool (not part of the pack build) and intentionally not locked: install
@@ -54,15 +49,12 @@ jobs:
         run: npm install --no-save @lezer/javascript@1.5.4
 
       - name: Check exercise invariants
-        run: node check-exercises.mjs && node check-symbols.mjs
-
-      - name: Bundle p5.js
-        run: node bundle-p5.mjs
+        run: node scripts/check/exercises.mjs && node scripts/check/symbols.mjs
 
       - name: Build content pack
         env:
           CONTENT_VERSION: ${{ inputs.content_version }}
-        run: node build-content.mjs
+        run: node scripts/build/content.mjs
 
       - name: Publish content pack to release
         uses: softprops/action-gh-release@v3
@@ -77,4 +69,3 @@ jobs:
           files: |
             content/manifest.json
             content/pack.json
-            content/p5.min.js
