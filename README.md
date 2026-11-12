@@ -1,40 +1,27 @@
 # learn-p5-content
 
-Authored content for the Learn P5 app: course YAML, the p5.js runtime bundle,
-generated reference data, and the validation checks that guard them. The app
-downloads the published pack (`content-latest` release) at runtime.
+Authored content and build/validation tooling for the Learn p5 app. The app downloads the published content pack (`content-latest` release) at launch.
 
-The p5.js runtime ships as its own artifact, `p5.min.js`, alongside
-`pack.json` in the same release. The app downloads it once, caches it, and
-loads it as a separate script file in previews rather than inlining it into
-every exercise's HTML. The bundle is produced by `bundle-p5.mjs`, which
-downloads the pinned jsDelivr release, transpiles it to ES2015, and prepends
-the ES5 compatibility shim.
+## Structure
 
-## Checks
+- `courses/` — course definitions in YAML (`*.yaml`).
+- `scripts/build/` — build pipeline scripts (`content.mjs`, `courses.mjs`, `reference.mjs`).
+- `scripts/bundle/` — bundling scripts (`validation.mjs` generates `validation-core.generated.ts`).
+- `scripts/check/` — content checks (`exercises.mjs`, `symbols.mjs`).
+- `scripts/lib/` — shared modules and utilities (e.g. `validation.ts`, `p5-version.mjs`, `description-format.mjs` and its tests).
+- `reference.generated.json`, `p5Assets.generated.json` — generated reference/assets data.
+- `content/` — build output (pack, manifest, bundled p5 runtime) produced by the build.
 
-Course content changes must keep the exercise invariants green and the symbol
-checks clean:
+## Commands
 
 ```bash
-npm run check   # bundles the validation core, then check-exercises + check-symbols
+npm run build    # generate reference/assets and build the content pack
+npm run check    # run tests and content validation checks
+npm test         # run script/lib tests
 ```
 
-These validate the course YAML against the same validation core the app
-ships (see `validation.ts`). The lezer parser (`@lezer/javascript`) is a
-dev-only tool and intentionally not locked: install it ad hoc when running
-checks locally:
+CI runs the same checks in `.github/workflows/content.yaml`.
 
-```bash
-npm install --no-save @lezer/javascript@1.5.4
-```
+## License
 
-CI does the same thing in `.github/workflows/content.yaml`.
-
-## The validation core
-
-`validation.ts` is a byte-identical synced copy of
-`learn-p5/src/utils/editor/validation.ts` (the same file is bundled into the
-app's exercise WebView). Same as the mirrored `p5-version.mjs`, the two
-copies are kept in sync by hand. Edit the canonical file in learn-p5, then
-copy it here so both adapters bundle identical logic.
+Learning content inherits the license from the [p5.js](https://p5js.org) website content.

@@ -3,12 +3,12 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import jsyaml from "js-yaml";
-import { PINNED_P5_VERSION } from "./p5-version.mjs";
+import { PINNED_P5_VERSION } from "../lib/p5-version.mjs";
 import {
   descriptionToMarkdown,
   htmlToText,
   normalizeExampleCode,
-} from "./description-format.mjs";
+} from "../lib/description-format.mjs";
 
 const WEBSITE_REPO = "https://github.com/processing/p5.js-website.git";
 const REF_DIR = "src/content/reference/en";
@@ -77,7 +77,7 @@ function writeAssetMap(assetMap) {
   console.log(`  ${Object.keys(assetMap).length} bundled assets`);
 }
 
-// p5 version stamp: read from the bundle-p5 generated artefact so the
+// p5 version stamp: read from the build p5 generated artefact so the
 // reference metadata always matches the p5 version actually bundled.
 function readP5Version() {
   const candidates = [
