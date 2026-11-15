@@ -8,13 +8,18 @@
     "check-exercises": "node scripts/check/exercises.mjs",
     "check-symbols": "node scripts/check/symbols.mjs",
     "test": "node --test scripts/lib/description-format.test.mjs",
-    "check": "npm test && npm run bundle-validation && npm run check-exercises && npm run check-symbols"
+    "check": "npm test && npm run bundle-validation && npm run check-exercises && npm run check-symbols",
+    "prepare": "husky"
   },
   "dependencies": {
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@lezer/javascript": "1.5.4",
     "acorn": "^8.19.0",
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "husky": "^9.1.7"
   }
 }
